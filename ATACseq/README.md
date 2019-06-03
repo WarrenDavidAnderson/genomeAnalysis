@@ -1,5 +1,5 @@
 
-# Basic processing for PRO-seq fastq files
+# Basic processing for ATAC-seq fastq files
 
 Run the following analysis files:
 
