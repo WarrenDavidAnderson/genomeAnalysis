@@ -3,9 +3,9 @@
 
 Run the following analysis files:
 
-proseq_alignment.sh
-pro_get_plusminus.sh
-pro_get_bigwig.sh
+proseq_alignment.sh  
+pro_get_plusminus.sh  
+pro_get_bigwig.sh  
 
 ## proseq_alignment.sh
 

@@ -3,8 +3,8 @@
 
 Run the following analysis files:
 
-atacseq_alignment.sh
-atac_get_bigwig.sh
+atacseq_alignment.sh  
+atac_get_bigwig.sh  
 
 ## atacseq_alignment.sh
 
