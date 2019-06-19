@@ -90,5 +90,27 @@ bedGraphToBigWig pro_${ii}_minus.bedGraph mm10.chrom.sizes pro_${ii}_minus.bigWi
 done
 
 
+############################################################
+## add header to BGs for browser visualization
+############################################################
 
+# add header
+for ii in *.bedGraph
+do
+mv ${ii} tmp
+cond=$(echo ${ii} | awk -F"_" '{print $2}')
+strd=$(echo ${ii} | awk -F"_" '{print $3}')
+strd=$(echo ${strd} | awk -F".bedGraph" '{print $1}')
+if [ "${strd}" == "plus" ]; then
+	echo "track type=bedGraph name=${ii} color=255,0,0 altColor=255,0,0 alwaysZero=on visibility=full" > hdr
+fi
+if [ "${strd}" == "minus" ]; then
+	echo "track type=bedGraph name=${ii} color=0,0,255 altColor=0,0,255 alwaysZero=on visibility=full" > hdr
+fi
+cat hdr tmp > ${ii}
+rm hdr tmp
+done
+
+# compress
+gzip *.bedGraph
 
