@@ -1,9 +1,17 @@
 
+# cd /h4/t1/users/wa3j/scripts/ATAC/ATAC_3T3_20190920
+# nohup sh align.sh &
+
+# cd /nv/vol192/civeleklab/warren/MGlab/ATAC_WAFD/3T3_ATAC1-3/3T3_3hr_rep2/test
+# cd /m/civeleklab/civeleklab/warren/MGlab/ATAC_WAFD/3T3_ATAC1-3/3T3_3hr_rep2/test
+
+
 # basic information
 cell=3T3
 pth=/m/civeleklab/civeleklab/warren/MGlab/ATAC_WAFD/3T3_ATAC1-3
 sampleGenome=/m/civeleklab/civeleklab/warren/MGlab/genomes/mm10/mm10
 spikeGenome=/m/civeleklab/civeleklab/warren/MGlab/genomes/dm6/dm6
+maxin=500
 cd ${pth}
 
 # key directories and path information
@@ -11,6 +19,7 @@ PATH=$PATH:/h4/t1/users/wa3j/software/fastx
 PATH=$PATH:/h4/t1/apps/seqanal/bowtie2-2.2.5
 PATH=$PATH:/h4/t1/apps/seqanal/samtools-1.6
 PATH=$PATH:/h4/t1/apps/seqanal/bedtools/bin
+PATH=$PATH:/h4/t1/apps/seqanal/fastq-pair/bin
 
 # loop through each file for a given cell-type designation
 for fq in *${cell}*PE1.fastq.gz
@@ -25,7 +34,6 @@ cp *${name}*.gz ${name}
 cp -t ${name} backToSample2.py removeOverlap2.py pyShell.py
 cd ${name}
 
-
 ####################################################################
 # write a shell script to process each sample in the loop separately
 cat > atacScript_${name}.sh <<EOF
@@ -36,11 +44,10 @@ exec &> log_${name}.txt
 echo ${name}
 echo ""
 
-# basic counts
-printf "reads in original fastq \n"
-echo $(python -c "print $(zcat ${name}_PE1.fastq.gz | wc -l | awk '{print $1}')/4.0" | bc) 
-echo $(python -c "print $(zcat ${name}_PE2.fastq.gz | wc -l | awk '{print $1}')/4.0" | bc) 
-
+# unzip and pair the fastq files
+gunzip *.gz
+fastq_pair ${name}_PE1.fastq ${name}_PE2.fastq
+rm *single.fq
 
 ##########################################
 ## isolate sample-specific reads
@@ -48,8 +55,8 @@ echo $(python -c "print $(zcat ${name}_PE2.fastq.gz | wc -l | awk '{print $1}')/
 
 # align to the sample genome
 printf "\ninitial alignment to sample species \n"
-bowtie2 --maxins 140 -x ${sampleGenome} \
--1 ${name}_PE1.fastq.gz -2 ${name}_PE2.fastq.gz -S ${name}_smp.sam
+bowtie2 --maxins ${maxin} -x ${sampleGenome} \
+-1 ${name}_PE1.fastq.paired.fq -2 ${name}_PE2.fastq.paired.fq -S ${name}_smp.sam
 
 # sort the sam file, filter based on MAPQ=10, remove duplicates, and generate a bam file
 samtools view -b -q 10 ${name}_smp.sam | samtools sort -n - | samtools fixmate -m - - | \
@@ -68,40 +75,42 @@ rm ${name}_smp_rmdup.bam ${name}_smp_sort.bam
 # here we are aligning de-duplicated and 'uniquely' mapped reads from alignment to the sample species
 # the reads aligned here are the 'intersect' reads  
 # these reads will be removed from the sample and re-aligned with no mismatches to seed
+fastq_pair ${name}_smp_r1.fastq ${name}_smp_r2.fastq
 printf "\nalign sample-aligned and MAPQ-filtered data to 'spike-in' species \n"
-bowtie2 --maxins 140 -x ${spikeGenome} \
--1 ${name}_smp_r1.fastq -2 ${name}_smp_r2.fastq -S ${name}_spk.sam
+bowtie2 --maxins ${maxin} -x ${spikeGenome} \
+-1 ${name}_smp_r1.fastq.paired.fq -2 ${name}_smp_r2.fastq.paired.fq -S ${name}_spk.sam
 samtools view -b -q 10 ${name}_spk.sam | samtools sort -n - | samtools fixmate -m - - | \
 samtools sort - | samtools markdup -r - ${name}_spk_rmdup.bam
 printf "\nnumber of sample MAPQ-filtered and deduplicated reads \n"
 samtools view -c ${name}_spk_rmdup.bam
 samtools sort -n ${name}_spk_rmdup.bam -o ${name}_spk_sort.bam
 bedtools bamtofastq -i ${name}_spk_sort.bam -fq ${name}_spk_r1.fastq -fq2 ${name}_spk_r2.fastq
-rm ${name}_spk.sam ${name}_spk_rmdup.bam ${name}_spk_sort.bam
+rm ${name}_spk.sam ${name}_spk_rmdup.bam ${name}_spk_sort.bam *single*
 
 # remove doubly unique (intersect) reads from sample
 # input 1 to python script - reads will be removed from this file
 # input 2 to python script - these reads will be removed
 # input 3 to python script - output file
+fastq_pair ${name}_spk_r1.fastq ${name}_spk_r2.fastq
 printf "\nremove intersect from sample \n"
-python removeOverlap2.py ${name}_smp_r1.fastq ${name}_spk_r1.fastq ${name}_smp_r1_spkrem.fastq
-python removeOverlap2.py ${name}_smp_r2.fastq ${name}_spk_r2.fastq ${name}_smp_r2_spkrem.fastq
+python removeOverlap2.py ${name}_smp_r1.fastq.paired.fq ${name}_spk_r1.fastq.paired.fq ${name}_smp_r1_spkrem.fastq
+python removeOverlap2.py ${name}_smp_r2.fastq.paired.fq ${name}_spk_r2.fastq.paired.fq ${name}_smp_r2_spkrem.fastq
 printf "\nline count after removing overlap reads \n"
 python pyShell.py ${name}_smp_r1_spkrem.fastq
 python pyShell.py ${name}_smp_r2_spkrem.fastq
-rm ${name}_smp_r1.fastq ${name}_smp_r2.fastq 
+rm ${name}_smp_r1.fastq ${name}_smp_r2.fastq *single*
 
 # realign thes doubly unique intersect reads to the sample species 
 # do not allow mismatches
 printf "\nalign these doubly overlap to the sample species without mismatches \n" 
-bowtie2 --maxins 140 --no-1mm-upfront -x ${sampleGenome} \
--1 ${name}_spk_r1.fastq -2 ${name}_spk_r2.fastq -S ${name}_smp_spkrem_smp.sam
+bowtie2 --maxins ${maxin} --no-1mm-upfront -x ${sampleGenome} \
+-1 ${name}_spk_r1.fastq.paired.fq -2 ${name}_spk_r2.fastq.paired.fq -S ${name}_smp_spkrem_smp.sam
 
 # realign these doubly unique intersect reads to the spike-in species without mismatches
 # uniquely aligned reads should be removed from the sample reads 
 printf "\nalign these doubly overlap to the spike-in species without mismatches \n"
-bowtie2 --maxins 140 --no-1mm-upfront -x ${spikeGenome} \
--1 ${name}_spk_r1.fastq -2 ${name}_spk_r2.fastq -S ${name}_smp_spkrem_spk.sam
+bowtie2 --maxins ${maxin} --no-1mm-upfront -x ${spikeGenome} \
+-1 ${name}_spk_r1.fastq.paired.fq -2 ${name}_spk_r2.fastq.paired.fq -S ${name}_smp_spkrem_spk.sam
 
 # extract unique alignments in the sample no mismatch file
 samtools view -b -q 10 ${name}_smp_spkrem_smp.sam | samtools sort -n - | \
@@ -132,9 +141,12 @@ rm ${name}_smp_spkrem_spk_sort.bam
 # input 1 to python script - reads will be removed from this file
 # input 2 to python script - these reads will be removed 
 # input 3 to python script - output file
+fastq_pair ${name}_smp_spkrem_spk_r1.fastq ${name}_smp_spkrem_spk_r2.fastq
+fastq_pair ${name}_smp_spkrem_smp_r1.fastq ${name}_smp_spkrem_smp_r2.fastq
 printf "\nremove spike in no-mm from sample no-mm reads to get reads that should go back to the sample \n"
-python backToSample2.py ${name}_smp_spkrem_smp_r1.fastq ${name}_smp_spkrem_spk_r1.fastq ${name}_smp_spkrem2_r1.fastq
-python backToSample2.py ${name}_smp_spkrem_smp_r2.fastq ${name}_smp_spkrem_spk_r2.fastq ${name}_smp_spkrem2_r2.fastq
+python backToSample2.py ${name}_smp_spkrem_smp_r1.fastq.paired.fq ${name}_smp_spkrem_spk_r1.fastq.paired.fq ${name}_smp_spkrem2_r1.fastq
+python backToSample2.py ${name}_smp_spkrem_smp_r2.fastq.paired.fq ${name}_smp_spkrem_spk_r2.fastq.paired.fq ${name}_smp_spkrem2_r2.fastq
+rm *single*
 
 # add the sample-specific no-mm reads back to the sample
 cat ${name}_smp_r1_spkrem.fastq ${name}_smp_spkrem2_r1.fastq > ${name}_smp_r1.fastq
@@ -143,14 +155,15 @@ rm ${name}_smp_r1_spkrem.fastq ${name}_smp_spkrem2_r1.fastq
 rm ${name}_smp_r2_spkrem.fastq ${name}_smp_spkrem2_r2.fastq
 
 # re-align final sample reads and generate the output bam file
+fastq_pair ${name}_smp_r1.fastq ${name}_smp_r2.fastq
 printf "\nfinal alignment for sample data \n"
-bowtie2 --maxins 140 -x ${sampleGenome} -1 ${name}_smp_r1.fastq -2 ${name}_smp_r2.fastq -S ${name}_sample1.sam
+bowtie2 --maxins ${maxin} -x ${sampleGenome} -1 ${name}_smp_r1.fastq.paired.fq -2 ${name}_smp_r2.fastq.paired.fq -S ${name}_sample1.sam
 samtools view -b -q 10 ${name}_sample1.sam | samtools sort -n - | \
 samtools fixmate -m - - | samtools sort - | \
 samtools markdup -r - ${name}_sample_atac.bam
 printf "\nfinal number of sample reads \n"
 samtools view -c ${name}_sample_atac.bam
-rm ${name}_sample1.sam 
+rm ${name}_sample1.sam *single*
 
 
 ####################################################################
@@ -159,8 +172,8 @@ rm ${name}_sample1.sam
 
 # align to the spike genome
 printf "\ninitial alignment to spike-in species \n"
-bowtie2 --maxins 140 -x ${spikeGenome} \
--1 ${name}_PE1.fastq.gz -2 ${name}_PE2.fastq.gz -S ${name}_spk.sam
+bowtie2 --maxins ${maxin} -x ${spikeGenome} \
+-1 ${name}_PE1.fastq.paired.fq -2 ${name}_PE2.fastq.paired.fq -S ${name}_spk.sam
 
 # sort the sam file, filter based on MAPQ=10, remove duplicates, and generate a bam file
 samtools view -b -q 10 ${name}_spk.sam | samtools sort -n - | samtools fixmate -m - - | \
@@ -178,24 +191,28 @@ rm ${name}_spk_rmdup.bam ${name}_spk_sort.bam
 # here we are aligning de-duplicated and 'uniquely' mapped reads from alignment to the spike-in species
 # the reads aligned here are the 'intersect' reads  
 # these reads will be removed from the spike-in and re-aligned with no mismatches to seed
+fastq_pair ${name}_spk_r1.fastq ${name}_spk_r2.fastq
 printf "\nalign spike-aligned and MAPQ-filtered data to 'sample' species \n"
-bowtie2 --maxins 140 -x ${sampleGenome} \
--1 ${name}_spk_r1.fastq -2 ${name}_spk_r2.fastq -S ${name}_spk.sam
+bowtie2 --maxins ${maxin} -x ${sampleGenome} \
+-1 ${name}_spk_r1.fastq.paired.fq -2 ${name}_spk_r2.fastq.paired.fq -S ${name}_spk.sam
+
 samtools view -b -q 10 ${name}_spk.sam | samtools sort -n - | samtools fixmate -m - - | \
 samtools sort - | samtools markdup -r - ${name}_spk_rmdup.bam
 printf "\nnumber of spike MAPQ-filtered and deduplicated reads \n"
 samtools view -c ${name}_spk_rmdup.bam
 samtools sort -n ${name}_spk_rmdup.bam -o ${name}_spk_sort.bam
 bedtools bamtofastq -i ${name}_spk_sort.bam -fq ${name}_spkrm_r1.fastq -fq2 ${name}_spkrm_r2.fastq
-rm ${name}_spk.sam ${name}_spk_rmdup.bam ${name}_spk_sort.bam
+rm ${name}_spk.sam ${name}_spk_rmdup.bam ${name}_spk_sort.bam *single*
 
 # remove doubly unique (intersect) reads from spike-in
 # input 1 to python script - reads will be removed from this file
 # input 2 to python script - these reads will be removed
 # input 3 to python script - output file
+fastq_pair ${name}_spkrm_r1.fastq ${name}_spkrm_r2.fastq
+
 printf "\nremove intersect from sample \n"
-python removeOverlap2.py ${name}_spk_r1.fastq ${name}_spkrm_r1.fastq ${name}_spk_r1_smprem.fastq
-python removeOverlap2.py ${name}_spk_r2.fastq ${name}_spkrm_r2.fastq ${name}_spk_r2_smprem.fastq
+python removeOverlap2.py ${name}_spk_r1.fastq.paired.fq ${name}_spkrm_r1.fastq.paired.fq ${name}_spk_r1_smprem.fastq
+python removeOverlap2.py ${name}_spk_r2.fastq.paired.fq ${name}_spkrm_r2.fastq.paired.fq ${name}_spk_r2_smprem.fastq
 printf "\nline count after removing overlap reads \n"
 python pyShell.py ${name}_spk_r1_smprem.fastq
 python pyShell.py ${name}_spk_r2_smprem.fastq
@@ -207,16 +224,17 @@ rm ${name}_spk_r1.fastq ${name}_spk_r2.fastq
 # input 2 to python script - these reads will be removed 
 # input 3 to python script - output file
 printf "\nremove sample in no-mm from spike no-mm reads to get reads that should go back to the spike-in \n"
-python backToSample2.py ${name}_smp_spkrem_spk_r1.fastq ${name}_smp_spkrem_smp_r1.fastq backtospike_r1.fastq
-python backToSample2.py ${name}_smp_spkrem_spk_r2.fastq ${name}_smp_spkrem_smp_r2.fastq backtospike_r2.fastq
+python backToSample2.py ${name}_smp_spkrem_spk_r1.fastq.paired.fq ${name}_smp_spkrem_smp_r1.fastq.paired.fq backtospike_r1.fastq
+python backToSample2.py ${name}_smp_spkrem_spk_r2.fastq.paired.fq ${name}_smp_spkrem_smp_r2.fastq.paired.fq backtospike_r2.fastq
 cat ${name}_spk_r1_smprem.fastq backtospike_r1.fastq > finalspike_r1.fastq
 cat ${name}_spk_r2_smprem.fastq backtospike_r2.fastq > finalspike_r2.fastq
 rm ${name}_smp_spkrem_spk_r1.fastq ${name}_smp_spkrem_smp_r1.fastq
 rm ${name}_smp_spkrem_spk_r2.fastq ${name}_smp_spkrem_smp_r2.fastq
 
 # re-align final spike-in reads and generate the output bam file
+fastq_pair finalspike_r1.fastq finalspike_r2.fastq
 printf "\nfinal alignment for spike-in data \n"
-bowtie2 --maxins 140 -x ${spikeGenome} -1 finalspike_r1.fastq -2 finalspike_r2.fastq -S ${name}_spike1.sam
+bowtie2 --maxins ${maxin} -x ${spikeGenome} -1 finalspike_r1.fastq.paired.fq -2 finalspike_r2.fastq.paired.fq -S ${name}_spike1.sam
 samtools view -b -q 10 ${name}_spike1.sam | samtools sort -n - | \
 samtools fixmate -m - - | samtools sort - | \
 samtools markdup -r - ${name}_spike_atac.bam
